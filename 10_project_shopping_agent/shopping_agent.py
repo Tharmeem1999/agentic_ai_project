@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import base64
 from typing import Optional, Union
 
 from dotenv import load_dotenv
@@ -8,13 +9,13 @@ from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_groq import ChatGroq
 from reviews_api import get_product_rating
+from langchain_core.messages import HumanMessage
 
 load_dotenv()
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "store.db")
 
 llm = ChatGroq(model="qwen/qwen3.6-27b", temperature=0)
-
 
 @tool
 def search_products(
@@ -125,6 +126,38 @@ def checkout(product_id: int) -> str:
         f"Your order will arrive in 3-5 business days. Thank you for shopping with us!"
     )
 
+def describe_product_image(image_path: str) -> str:
+    """
+    Analyze a product image and return its key attributes as a JSON object.
+    Use this when the user uploads a photo of a product they are interested in.
+    The returned attributes can be used directly with search_products.
+    """
+    with open(image_path, "rb") as f:
+        image_data = base64.b64encode(f.read()).decode()
+
+    ext = os.path.splitext(image_path)[1].lower().lstrip(".")
+    mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+    
+    message = HumanMessage(content=[
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{image_data}"},
+        },
+        {
+            "type": "text",
+            "text":(
+                "Look at this product image and extract its key attributes. "
+                "Return ONLY a JSON object with these fields:\n"
+                "- product_type: what kind of product it is (e.g. honey, olive oil, almonds)\n"
+                "- search_query: a short keyword to search for it (e.g. 'honey', 'olive oil')\n"
+                "- is_organic: true if the label says organic, false if not, null if unclear\n"
+                "- description: one sentence describing the product"
+            )
+        }
+    ])
+
+    response = llm.invoke([message])
+    return response.content
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -163,16 +196,19 @@ agent = create_agent(
 )
 
 if __name__ == "__main__":
-    result = agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": (
-                        "I want to buy organic honey with 4.5+ rating and less than $20 price."
-                    ),
-                }
-            ]
-        }
-    )
-    print(result["messages"][-1].content)
+    image_path = os.path.join("resources", "oats.png")
+    response = describe_product_image(image_path)
+    print("Image description response: ", response)
+    # result = agent.invoke(
+    #     {
+    #         "messages": [
+    #             {
+    #                 "role": "user",
+    #                 "content": (
+    #                     "I want to buy organic honey with 4.5+ rating and less than $20 price."
+    #                 ),
+    #             }
+    #         ]
+    #     }
+    # )
+    # print(result["messages"][-1].content)
